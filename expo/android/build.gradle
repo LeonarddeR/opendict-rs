@@ -1,0 +1,24 @@
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+apply plugin: 'expo-module-scripts'
+
+android {
+  namespace 'expo.modules.opendict'
+  compileSdk 35
+
+  defaultConfig {
+    minSdk 24
+  }
+
+  sourceSets {
+    main {
+      jniLibs.srcDirs = ['src/main/jniLibs']
+      java.srcDirs = ['src/main/java']
+    }
+  }
+}
+
+dependencies {
+  implementation project(':expo-modules-core')
+  implementation 'net.java.dev.jna:jna:5.14.0@aar'
+}

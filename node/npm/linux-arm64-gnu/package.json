@@ -1,0 +1,40 @@
+{
+  "name": "@opendict-rs/node-linux-arm64-gnu",
+  "version": "0.1.0",
+  "cpu": [
+    "arm64"
+  ],
+  "main": "opendict.linux-arm64-gnu.node",
+  "files": [
+    "opendict.linux-arm64-gnu.node"
+  ],
+  "description": "Node.js bindings for opendict-rs — read StarDict and MDict dictionaries from JavaScript",
+  "keywords": [
+    "stardict",
+    "mdict",
+    "dictionary",
+    "rust",
+    "napi",
+    "napi-rs"
+  ],
+  "author": "Callum Gander <callumgander@protonmail.com>",
+  "homepage": "https://github.com/callum-gander/opendict-rs",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/callum-gander/opendict-rs.git",
+    "directory": "node"
+  },
+  "bugs": {
+    "url": "https://github.com/callum-gander/opendict-rs/issues"
+  },
+  "os": [
+    "linux"
+  ],
+  "libc": [
+    "glibc"
+  ]
+}

@@ -1,0 +1,15 @@
+[package]
+name = "opendict-node"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+napi = "3"
+napi-derive = "3"
+opendict = { path = "..", package = "opendict-rs" }
+
+[build-dependencies]
+napi-build = "1"

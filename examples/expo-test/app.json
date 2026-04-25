@@ -1,0 +1,16 @@
+{
+  "expo": {
+    "name": "opendict-expo-test",
+    "slug": "opendict-expo-test",
+    "version": "1.0.0",
+    "scheme": "opendict-test",
+    "platforms": ["ios", "android"],
+    "ios": {
+      "bundleIdentifier": "com.opendict.expotest"
+    },
+    "android": {
+      "package": "com.opendict.expotest"
+    },
+    "plugins": ["expo-router"]
+  }
+}

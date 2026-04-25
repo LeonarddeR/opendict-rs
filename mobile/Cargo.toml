@@ -1,0 +1,15 @@
+[package]
+name = "opendict-mobile"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["lib", "cdylib", "staticlib"]
+name = "opendict_mobile"
+
+[dependencies]
+uniffi = { version = "0.29", features = ["cli"] }
+opendict = { path = "..", package = "opendict-rs" }
+
+[build-dependencies]
+uniffi = { version = "0.29", features = ["build"] }

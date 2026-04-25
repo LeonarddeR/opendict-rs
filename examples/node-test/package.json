@@ -1,0 +1,11 @@
+{
+  "name": "opendict-node-test",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node test.mjs"
+  },
+  "dependencies": {
+    "@opendict-rs/node": "file:../../node"
+  }
+}

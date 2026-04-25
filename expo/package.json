@@ -1,0 +1,50 @@
+{
+  "name": "@opendict-rs/expo",
+  "version": "0.1.0",
+  "description": "Expo native module for reading StarDict and MDict dictionaries via opendict-rs",
+  "main": "build/index.js",
+  "types": "build/index.d.ts",
+  "homepage": "https://github.com/callum-gander/opendict-rs",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/callum-gander/opendict-rs.git",
+    "directory": "expo"
+  },
+  "bugs": {
+    "url": "https://github.com/callum-gander/opendict-rs/issues"
+  },
+  "author": "Callum Gander <callumgander@protonmail.com>",
+  "license": "MIT",
+  "keywords": [
+    "expo",
+    "expo-module",
+    "react-native",
+    "dictionary",
+    "stardict",
+    "mdict",
+    "rust"
+  ],
+  "files": [
+    "android",
+    "build",
+    "ios",
+    "src",
+    "expo-module.config.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "expo-module build",
+    "clean": "expo-module clean",
+    "prepublishOnly": "../scripts/build-mobile.sh"
+  },
+  "peerDependencies": {
+    "expo": ">=52.0.0",
+    "react": ">=18.0.0",
+    "react-native": ">=0.76.0"
+  },
+  "devDependencies": {
+    "expo": "^52.0.0",
+    "expo-module-scripts": "^4.0.0"
+  }
+}
