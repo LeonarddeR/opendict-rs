@@ -48,6 +48,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+
+      # musl targets cross-compile via cargo-zigbuild, which needs zig on PATH
+      - name: Install zig
+        if: contains(matrix.target, 'musl')
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.13.0
+
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: node -> target
