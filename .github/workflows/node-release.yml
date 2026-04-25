@@ -109,6 +109,6 @@ jobs:
         working-directory: node
         run: |
           npm config set //registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}
-          npx napi prepublish -t npm
+          npx napi prepublish -t npm --no-gh-release
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
