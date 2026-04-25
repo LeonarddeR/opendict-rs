@@ -33,6 +33,9 @@
     "README.md",
     "LICENSE"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "expo-module build",
     "clean": "expo-module clean",
