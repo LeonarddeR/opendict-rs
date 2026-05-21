@@ -60,6 +60,20 @@ impl Dictionary {
     }
 
     #[napi]
+    pub fn lookup_by_index(&self, index: u32) -> Result<Option<Vec<DictEntry>>> {
+        let entries = self.inner.lookup_by_index(index as usize)
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        Ok(entries.map(|es| {
+            es.into_iter()
+                .map(|e| DictEntry {
+                    entry_type: e.type_id.to_string(),
+                    data: String::from_utf8_lossy(&e.data).into_owned(),
+                })
+                .collect()
+        }))
+    }
+
+    #[napi]
     pub fn word_list(&self) -> Vec<String> {
         self.inner.word_list().into_iter().map(|s| s.to_string()).collect()
     }

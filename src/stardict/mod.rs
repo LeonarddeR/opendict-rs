@@ -113,6 +113,20 @@ impl StarDictDictionary {
         self.dict.read_entry(target.offset, target.size, sametypesequence).map(Some)
     }
 
+    /// Look up a word by its index position in the idx file (bypasses binary search).
+    pub fn lookup_by_index(&self, index: usize) -> crate::Result<Option<Vec<DictEntry>>> {
+        if index >= self.idx.entry_count() {
+            return Ok(None);
+        }
+        let entry = self.idx.entry(index);
+        let sametypesequence = if self.ifo.same_type_sequence.is_empty() {
+            None
+        } else {
+            Some(self.ifo.same_type_sequence.as_str())
+        };
+        self.dict.read_entry(entry.offset, entry.size, sametypesequence).map(Some)
+    }
+
     /// Return a list of all words in the index.
     pub fn word_list(&self) -> Vec<&str> {
         (0..self.idx.entry_count())
@@ -128,6 +142,10 @@ impl Dictionary for StarDictDictionary {
 
     fn lookup_synonym(&self, word: &str) -> crate::Result<Option<Vec<DictEntry>>> {
         self.lookup_synonym(word)
+    }
+
+    fn lookup_by_index(&self, index: usize) -> crate::Result<Option<Vec<DictEntry>>> {
+        self.lookup_by_index(index)
     }
 
     fn word_list(&self) -> Vec<&str> {
