@@ -1,10 +1,12 @@
+use std::borrow::Cow;
 use std::fs::{self, File};
-use std::io::{Read, Write};
+use std::io::Read;
 use std::path;
 
 use flate2::read::GzDecoder;
 use memmap2::Mmap;
 
+use super::dictzip::DictzipReader;
 use crate::error::Error;
 use crate::types::DictEntry;
 
@@ -12,6 +14,32 @@ use crate::types::DictEntry;
 enum DictData {
     Mapped(Mmap),
     Owned(Vec<u8>),
+    /// A dictzip `.dz` file read one chunk at a time (no full decompression).
+    Dictzip(DictzipReader),
+}
+
+impl DictData {
+    /// Return the raw bytes for `[offset, offset + size)`, decompressing on
+    /// demand. The slice-backed variants borrow; dictzip yields an owned `Vec`.
+    fn read_range(&self, offset: u64, size: u32) -> crate::Result<Cow<'_, [u8]>> {
+        match self {
+            DictData::Mapped(m) => slice_range(m, offset, size).map(Cow::Borrowed),
+            DictData::Owned(v) => slice_range(v, offset, size).map(Cow::Borrowed),
+            DictData::Dictzip(dz) => dz.read(offset, size).map(Cow::Owned),
+        }
+    }
+}
+
+fn slice_range(data: &[u8], offset: u64, size: u32) -> crate::Result<&[u8]> {
+    let start = offset as usize;
+    let end = start + size as usize;
+    if end > data.len() {
+        return Err(Error::InvalidFormat(format!(
+            "dict entry offset {}+{} exceeds data length {}",
+            start, size, data.len()
+        )));
+    }
+    Ok(&data[start..end])
 }
 
 #[derive(Debug)]
@@ -20,39 +48,33 @@ pub struct Dict {
 }
 
 impl Dict {
-    /// Open a .dict or .dict.dz/.dict.gz file.
+    /// Open a `.dict`, `.dict.dz`, or `.dict.gz` file.
     ///
-    /// If `cache_to_disk` is true and the file is compressed, the decompressed
-    /// data is written alongside the original as a `.dict` file for faster
-    /// subsequent opens. When false, compressed data is decompressed in memory.
-    ///
-    /// An existing decompressed `.dict` file is always used if present,
-    /// regardless of this flag.
-    pub fn open(file: &path::Path, cache_to_disk: bool) -> crate::Result<Dict> {
+    /// An uncompressed `.dict` (or a decompressed one sitting alongside the
+    /// compressed file) is memory-mapped directly. A `.dict.dz` carrying a
+    /// dictzip random-access table is read one chunk at a time. A plain gzip
+    /// stream without a dictzip table falls back to whole-file decompression in
+    /// memory.
+    pub fn open(file: &path::Path) -> crate::Result<Dict> {
         let is_compressed = file.extension()
             .is_some_and(|ext| ext == "gz" || ext == "dz");
         if is_compressed {
-            // Check if a decompressed .dict already exists alongside
+            // Prefer a decompressed .dict sitting alongside, if one exists.
             let decompressed_path = file.with_extension("").with_extension("dict");
             if decompressed_path.exists() {
                 return Self::open_mmap(&decompressed_path);
             }
 
-            // Decompress the gzip data
+            // True dictzip random access when the file carries an RA table.
+            if let Some(reader) = DictzipReader::open(file)? {
+                return Ok(Dict { data: DictData::Dictzip(reader) });
+            }
+
+            // Plain gzip (no RA subfield): decompress the whole file in memory.
             let raw = fs::read(file)?;
             let mut decoder = GzDecoder::new(&raw[..]);
             let mut decompressed = Vec::new();
             decoder.read_to_end(&mut decompressed)?;
-
-            // Optionally write to disk and mmap
-            if cache_to_disk {
-                if let Ok(mut f) = File::create(&decompressed_path) {
-                    let _ = f.write_all(&decompressed);
-                    drop(f);
-                    return Self::open_mmap(&decompressed_path);
-                }
-            }
-
             Ok(Dict { data: DictData::Owned(decompressed) })
         } else {
             Self::open_mmap(file)
@@ -66,30 +88,14 @@ impl Dict {
         Ok(Dict { data: DictData::Mapped(mmap) })
     }
 
-    fn bytes(&self) -> &[u8] {
-        match &self.data {
-            DictData::Mapped(m) => m,
-            DictData::Owned(v) => v,
-        }
-    }
-
     pub fn read_entry(
         &self,
         offset: u64,
         size: u32,
         sametypesequence: Option<&str>,
     ) -> crate::Result<Vec<DictEntry>> {
-        let data = self.bytes();
-        let start = offset as usize;
-        let end = start + size as usize;
-        if end > data.len() {
-            return Err(Error::InvalidFormat(format!(
-                "dict entry offset {}+{} exceeds data length {}",
-                start, size, data.len()
-            )));
-        }
-        let raw = &data[start..end];
-        Self::parse_entries(raw, sametypesequence)
+        let raw = self.data.read_range(offset, size)?;
+        Self::parse_entries(&raw, sametypesequence)
     }
 
     fn parse_entries(data: &[u8], sametypesequence: Option<&str>) -> crate::Result<Vec<DictEntry>> {
@@ -201,7 +207,7 @@ mod tests {
 
     #[test]
     fn reads_another_at_offset_0() {
-        let dict = Dict::open(&fixture("testdict.dict"), false).unwrap();
+        let dict = Dict::open(&fixture("testdict.dict")).unwrap();
         let entries = dict.read_entry(0, 8, Some("m")).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].type_id, 'm');
@@ -210,7 +216,7 @@ mod tests {
 
     #[test]
     fn reads_foo_at_offset_8() {
-        let dict = Dict::open(&fixture("testdict.dict"), false).unwrap();
+        let dict = Dict::open(&fixture("testdict.dict")).unwrap();
         let entries = dict.read_entry(8, 3, Some("m")).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].type_id, 'm');
@@ -219,7 +225,7 @@ mod tests {
 
     #[test]
     fn reads_lorem_at_offset_11() {
-        let dict = Dict::open(&fixture("testdict.dict"), false).unwrap();
+        let dict = Dict::open(&fixture("testdict.dict")).unwrap();
         let entries = dict.read_entry(11, 5, Some("m")).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].type_id, 'm');
@@ -228,7 +234,7 @@ mod tests {
 
     #[test]
     fn reads_some_word_at_offset_16() {
-        let dict = Dict::open(&fixture("testdict.dict"), false).unwrap();
+        let dict = Dict::open(&fixture("testdict.dict")).unwrap();
         let entries = dict.read_entry(16, 13, Some("m")).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].type_id, 'm');
@@ -237,7 +243,7 @@ mod tests {
 
     #[test]
     fn last_entry_has_no_null_terminator() {
-        let dict = Dict::open(&fixture("testdict.dict"), false).unwrap();
+        let dict = Dict::open(&fixture("testdict.dict")).unwrap();
         let entries = dict.read_entry(16, 13, Some("m")).unwrap();
         assert_eq!(entries[0].data, b"a translation");
         assert_ne!(entries[0].data.last(), Some(&0u8));
@@ -245,7 +251,7 @@ mod tests {
 
     #[test]
     fn all_entries_type_m() {
-        let dict = Dict::open(&fixture("testdict.dict"), false).unwrap();
+        let dict = Dict::open(&fixture("testdict.dict")).unwrap();
         let offsets: &[(u64, u32)] = &[(0, 8), (8, 3), (11, 5), (16, 13)];
         let expected_data: &[&[u8]] = &[b"translat", b"bar", b"ipsum", b"a translation"];
         for (i, &(offset, size)) in offsets.iter().enumerate() {
@@ -270,7 +276,7 @@ mod tests {
         let path = dir.path().join("tm.dict");
         std::fs::write(&path, &data).unwrap();
 
-        let dict = Dict::open(&path, false).unwrap();
+        let dict = Dict::open(&path).unwrap();
         let entries = dict.read_entry(0, data.len() as u32, Some("tm")).unwrap();
 
         assert_eq!(entries.len(), 2);
@@ -284,7 +290,7 @@ mod tests {
 
     #[test]
     fn no_sametypesequence_entry1_two_fields() {
-        let dict = Dict::open(&fixture("multitype.dict"), false).unwrap();
+        let dict = Dict::open(&fixture("multitype.dict")).unwrap();
         let entries = dict.read_entry(0, 20, None).unwrap();
 
         assert_eq!(entries.len(), 2);
@@ -296,7 +302,7 @@ mod tests {
 
     #[test]
     fn no_sametypesequence_entry2_one_field() {
-        let dict = Dict::open(&fixture("multitype.dict"), false).unwrap();
+        let dict = Dict::open(&fixture("multitype.dict")).unwrap();
         let entries = dict.read_entry(20, 11, None).unwrap();
 
         assert_eq!(entries.len(), 1);
@@ -318,7 +324,7 @@ mod tests {
         let path = dir.path().join("upper.dict");
         std::fs::write(&path, &data).unwrap();
 
-        let dict = Dict::open(&path, false).unwrap();
+        let dict = Dict::open(&path).unwrap();
         let entries = dict.read_entry(0, data.len() as u32, None).unwrap();
 
         assert_eq!(entries.len(), 1);
@@ -339,7 +345,7 @@ mod tests {
         let path = dir.path().join("mixed.dict");
         std::fs::write(&path, &data).unwrap();
 
-        let dict = Dict::open(&path, false).unwrap();
+        let dict = Dict::open(&path).unwrap();
         let entries = dict.read_entry(0, data.len() as u32, None).unwrap();
 
         assert_eq!(entries.len(), 2);
@@ -356,7 +362,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("small.dict");
         std::fs::write(&path, b"hello").unwrap();
-        let dict = Dict::open(&path, false).unwrap();
+        let dict = Dict::open(&path).unwrap();
         let result = dict.read_entry(0, 100, Some("m"));
         assert!(matches!(result, Err(crate::error::Error::InvalidFormat(_))));
     }
@@ -366,7 +372,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("nonull.dict");
         std::fs::write(&path, b"no null here").unwrap();
-        let dict = Dict::open(&path, false).unwrap();
+        let dict = Dict::open(&path).unwrap();
         let result = dict.read_entry(0, 12, Some("tm"));
         assert!(matches!(result, Err(crate::error::Error::InvalidFormat(_))));
     }
@@ -377,7 +383,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("trunc_len.dict");
         std::fs::write(&path, [0xAA, 0xBB]).unwrap();
-        let dict = Dict::open(&path, false).unwrap();
+        let dict = Dict::open(&path).unwrap();
         let result = dict.read_entry(0, 2, Some("Wm"));
         assert!(matches!(result, Err(crate::error::Error::InvalidFormat(_))));
     }
@@ -391,7 +397,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("oversize.dict");
         std::fs::write(&path, &data).unwrap();
-        let dict = Dict::open(&path, false).unwrap();
+        let dict = Dict::open(&path).unwrap();
         let result = dict.read_entry(0, data.len() as u32, Some("Wm"));
         assert!(matches!(result, Err(crate::error::Error::InvalidFormat(_))));
     }
@@ -403,7 +409,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("no_sts_trunc.dict");
         std::fs::write(&path, data).unwrap();
-        let dict = Dict::open(&path, false).unwrap();
+        let dict = Dict::open(&path).unwrap();
         let result = dict.read_entry(0, data.len() as u32, None);
         assert!(matches!(result, Err(crate::error::Error::InvalidFormat(_))));
     }

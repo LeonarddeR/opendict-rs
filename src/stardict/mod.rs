@@ -1,6 +1,7 @@
 pub(crate) mod ifo;
 pub(crate) mod idx;
 pub(crate) mod dict;
+pub(crate) mod dictzip;
 pub(crate) mod syn;
 pub(crate) mod strcmp;
 pub(crate) mod io;
@@ -57,7 +58,7 @@ impl StarDictDictionary {
         } else {
             dir.join(format!("{}.dict.dz", name))
         };
-        let dict = dict::Dict::open(&dict_path, true)?;
+        let dict = dict::Dict::open(&dict_path)?;
 
         let syn_path = dir.join(format!("{}.syn", name));
         let syn = if syn_path.exists() && ifo.syn_word_count > 0 {

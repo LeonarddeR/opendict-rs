@@ -139,3 +139,57 @@ fn open_empty_dir_is_invalid_format() {
     let result = opendict::open(dir.path());
     assert!(matches!(result, Err(opendict::Error::InvalidFormat(_))));
 }
+
+// ── dictzip random-access (.dict.dz only, multi-chunk) ───────────────
+//
+// The `dzdict` fixture ships *only* as `dzdict.dict.dz` (no plain `.dict`),
+// forcing the dictzip code path. Its payload is ~77 KB across two 58315-byte
+// chunks, so `word052` (offset > 58315) exercises inflating a chunk other than
+// the first. Definitions are deterministic (see the generator).
+
+/// The exact definition text stored for entry `i` in the `dzdict` fixture.
+fn dzdict_definition(i: usize) -> String {
+    let filler = "abcdefghijklmnopqrstuvwxyz0123456789 ".repeat(30);
+    format!("Definition {i:03}: {filler}")
+}
+
+#[test]
+fn load_dictzip_only_dictionary() {
+    let dict = Dictionary::open(&fixtures_dir(), "dzdict");
+    assert!(dict.is_ok(), "should load a dictzip-only (.dict.dz) dictionary");
+}
+
+#[test]
+fn dictzip_lookup_in_first_chunk() {
+    let dict = Dictionary::open(&fixtures_dir(), "dzdict").unwrap();
+    let results = dict.lookup("word000").unwrap().unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].type_id, 'h');
+    assert_eq!(
+        std::str::from_utf8(&results[0].data).unwrap(),
+        dzdict_definition(0)
+    );
+}
+
+#[test]
+fn dictzip_lookup_past_first_chunk_boundary() {
+    // word052 lives at offset 58552 (> CHLEN 58315), i.e. in chunk 1 — proving
+    // the reader inflates a chunk other than the first.
+    let dict = Dictionary::open(&fixtures_dir(), "dzdict").unwrap();
+    let results = dict.lookup("word052").unwrap().unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].type_id, 'h');
+    assert_eq!(
+        std::str::from_utf8(&results[0].data).unwrap(),
+        dzdict_definition(52)
+    );
+}
+
+#[test]
+fn dictzip_open_does_not_write_decompressed_dict() {
+    let _dict = Dictionary::open(&fixtures_dir(), "dzdict").unwrap();
+    assert!(
+        !fixtures_dir().join("dzdict.dict").exists(),
+        "opening a .dict.dz must not write a decompressed .dict alongside it"
+    );
+}
