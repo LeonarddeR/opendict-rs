@@ -11,6 +11,7 @@ pub use types::{DictEntry, DictInfo};
 pub trait Dictionary {
     fn lookup(&self, word: &str) -> Result<Option<Vec<DictEntry>>>;
     fn lookup_synonym(&self, word: &str) -> Result<Option<Vec<DictEntry>>>;
+    fn lookup_by_index(&self, index: usize) -> Result<Option<Vec<DictEntry>>>;
     fn word_list(&self) -> Vec<&str>;
     fn word_count(&self) -> usize;
     fn info(&self) -> &DictInfo;

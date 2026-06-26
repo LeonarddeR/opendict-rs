@@ -130,6 +130,14 @@ impl Dictionary for MdictDictionary {
         Ok(None)
     }
 
+    fn lookup_by_index(&self, index: usize) -> crate::Result<Option<Vec<DictEntry>>> {
+        let keywords = &self.mdx.keywords;
+        if index >= keywords.len() {
+            return Ok(None);
+        }
+        self.lookup(&keywords[index])
+    }
+
     fn word_list(&self) -> Vec<&str> {
         self.mdx.keywords.iter().map(String::as_str).collect()
     }
