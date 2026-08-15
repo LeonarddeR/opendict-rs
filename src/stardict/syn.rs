@@ -21,7 +21,11 @@ pub struct Syn {
 
 impl Syn {
     pub fn open(file: &path::Path) -> crate::Result<Syn> {
-        let data = fs::read(file)?;
+        Self::from_bytes(fs::read(file)?)
+    }
+
+    /// Build the synonym index from raw .syn bytes.
+    pub fn from_bytes(data: Vec<u8>) -> crate::Result<Syn> {
         let mut offsets = Vec::new();
         let mut pos = 0;
 
