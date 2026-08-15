@@ -23,7 +23,11 @@ pub struct Idx {
 
 impl Idx {
     pub fn open(file: &path::Path, offset_bits: u32) -> crate::Result<Idx> {
-        let data = super::io::read_file(file)?;
+        Self::from_bytes(super::io::read_file(file)?, offset_bits)
+    }
+
+    /// Build the index from raw (already decompressed) .idx bytes.
+    pub fn from_bytes(data: Vec<u8>, offset_bits: u32) -> crate::Result<Idx> {
         let ref_size: usize = if offset_bits == 64 { 12 } else { 8 };
 
         let mut offsets = Vec::new();

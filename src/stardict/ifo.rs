@@ -21,6 +21,11 @@ pub struct Ifo {
 
 impl Ifo {
     pub fn open(file: &path::Path) -> crate::Result<Ifo> {
+        Self::read(io::BufReader::new(fs::File::open(file)?))
+    }
+
+    /// Parse .ifo content from any buffered reader, e.g. in-memory bytes.
+    pub fn read(reader: impl BufRead) -> crate::Result<Ifo> {
         let mut it = Ifo {
             author: String::new(),
             version: String::new(),
@@ -41,7 +46,7 @@ impl Ifo {
         let mut has_idx_file_size = false;
         let mut magic_checked = false;
 
-        for line in io::BufReader::new(fs::File::open(file)?).lines() {
+        for line in reader.lines() {
             let line = line?;
             let trimmed = line.trim();
             if trimmed.is_empty() {

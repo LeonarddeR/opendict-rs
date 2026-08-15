@@ -1,9 +1,7 @@
 use std::borrow::Cow;
 use std::fs::{self, File};
-use std::io::Read;
 use std::path;
 
-use flate2::read::GzDecoder;
 use memmap2::Mmap;
 
 use super::dictzip::DictzipReader;
@@ -72,12 +70,24 @@ impl Dict {
 
             // Plain gzip (no RA subfield): decompress the whole file in memory.
             let raw = fs::read(file)?;
-            let mut decoder = GzDecoder::new(&raw[..]);
-            let mut decompressed = Vec::new();
-            decoder.read_to_end(&mut decompressed)?;
-            Ok(Dict { data: DictData::Owned(decompressed) })
+            Ok(Dict { data: DictData::Owned(super::io::gunzip(&raw)?) })
         } else {
             Self::open_mmap(file)
+        }
+    }
+
+    /// Wrap raw uncompressed .dict bytes.
+    pub fn from_bytes(data: Vec<u8>) -> Dict {
+        Dict { data: DictData::Owned(data) }
+    }
+
+    /// Interpret `data` as a `.dict.dz`/`.dict.gz` stream: dictzip random
+    /// access when an RA table is present, whole-stream decompression
+    /// otherwise.
+    pub fn from_gzip_bytes(data: Vec<u8>) -> crate::Result<Dict> {
+        match DictzipReader::from_owned_bytes(data)? {
+            Ok(reader) => Ok(Dict { data: DictData::Dictzip(reader) }),
+            Err(raw) => Ok(Dict { data: DictData::Owned(super::io::gunzip(&raw)?) }),
         }
     }
 

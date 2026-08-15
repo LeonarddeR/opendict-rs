@@ -34,10 +34,26 @@ const FEXTRA: u8 = 1 << 2;
 const FNAME: u8 = 1 << 3;
 const FCOMMENT: u8 = 1 << 4;
 
-/// A memory-mapped `.dict.dz` file with a parsed dictzip chunk table.
+/// Backing bytes of a `.dz` stream: a file mapping or an owned buffer.
+#[derive(Debug)]
+enum DzSource {
+    Mapped(Mmap),
+    Owned(Vec<u8>),
+}
+
+impl DzSource {
+    fn bytes(&self) -> &[u8] {
+        match self {
+            DzSource::Mapped(m) => m,
+            DzSource::Owned(v) => v,
+        }
+    }
+}
+
+/// A `.dict.dz` stream with a parsed dictzip chunk table.
 #[derive(Debug)]
 pub struct DictzipReader {
-    mmap: Mmap,
+    source: DzSource,
     chunk_len: usize,
     /// File offset of each chunk's compressed data, with a trailing sentinel at
     /// the end of the last chunk. Length is `CHCNT + 1`.
@@ -54,15 +70,33 @@ impl DictzipReader {
         // SAFETY: dictionary files are read-only; we never mutate the mapping.
         let mmap = unsafe { Mmap::map(&f)? };
         Ok(parse_header(&mmap)?.map(|(chunk_len, comp_offsets)| DictzipReader {
-            mmap,
+            source: DzSource::Mapped(mmap),
             chunk_len,
             comp_offsets,
         }))
     }
 
+    /// Build a reader over an in-memory `.dz` stream.
+    ///
+    /// Returns the buffer back as the inner `Err` when it is plain gzip
+    /// without an RA subfield, so the caller can fall back to whole-stream
+    /// decompression without copying.
+    pub(crate) fn from_owned_bytes(
+        data: Vec<u8>,
+    ) -> crate::Result<Result<DictzipReader, Vec<u8>>> {
+        match parse_header(&data)? {
+            Some((chunk_len, comp_offsets)) => Ok(Ok(DictzipReader {
+                source: DzSource::Owned(data),
+                chunk_len,
+                comp_offsets,
+            })),
+            None => Ok(Err(data)),
+        }
+    }
+
     /// Inflate and return `size` bytes starting at uncompressed `offset`.
     pub fn read(&self, offset: u64, size: u32) -> crate::Result<Vec<u8>> {
-        read_range(&self.mmap, self.chunk_len, &self.comp_offsets, offset, size)
+        read_range(self.source.bytes(), self.chunk_len, &self.comp_offsets, offset, size)
     }
 }
 

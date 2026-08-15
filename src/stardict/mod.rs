@@ -43,6 +43,61 @@ impl StarDictDictionary {
         Self::open_from_ifo(dir, name, ifo)
     }
 
+    /// Load a dictionary from in-memory buffers, e.g. files unpacked from an
+    /// archive. `files` yields (file name, contents) pairs; the role of each
+    /// buffer is taken from the file name's extension (`.ifo`, `.idx`,
+    /// `.idx.gz`, `.dict`, `.dict.dz`, `.syn`), and unrecognized names are
+    /// ignored.
+    pub fn open_from_memory<I>(files: I) -> crate::Result<Self>
+    where
+        I: IntoIterator<Item = (String, Vec<u8>)>,
+    {
+        let mut ifo_bytes = None;
+        let mut idx_bytes = None;
+        let mut dict_bytes = None;
+        let mut syn_bytes = None;
+        for (name, data) in files {
+            if name.ends_with(".ifo") {
+                ifo_bytes = Some(data);
+            } else if name.ends_with(".idx.gz") {
+                idx_bytes = Some((data, true));
+            } else if name.ends_with(".idx") {
+                idx_bytes = Some((data, false));
+            } else if name.ends_with(".dict.dz") || name.ends_with(".dict.gz") {
+                dict_bytes = Some((data, true));
+            } else if name.ends_with(".dict") {
+                dict_bytes = Some((data, false));
+            } else if name.ends_with(".syn") {
+                syn_bytes = Some(data);
+            }
+        }
+
+        let ifo_bytes = ifo_bytes
+            .ok_or_else(|| Error::InvalidFormat("no .ifo buffer provided".into()))?;
+        let ifo = ifo::Ifo::read(&ifo_bytes[..])?;
+
+        let (idx_data, idx_gzipped) = idx_bytes
+            .ok_or_else(|| Error::InvalidFormat("no .idx buffer provided".into()))?;
+        let idx_data = if idx_gzipped { io::gunzip(&idx_data)? } else { idx_data };
+        let idx = idx::Idx::from_bytes(idx_data, ifo.idx_offset_bits)?;
+
+        let (dict_data, dict_compressed) = dict_bytes
+            .ok_or_else(|| Error::InvalidFormat("no .dict buffer provided".into()))?;
+        let dict = if dict_compressed {
+            dict::Dict::from_gzip_bytes(dict_data)?
+        } else {
+            dict::Dict::from_bytes(dict_data)
+        };
+
+        let syn = match syn_bytes {
+            Some(data) if ifo.syn_word_count > 0 => Some(syn::Syn::from_bytes(data)?),
+            _ => None,
+        };
+
+        let info_data = info_of(&ifo);
+        Ok(StarDictDictionary { idx, ifo, dict, syn, info_data })
+    }
+
     fn open_from_ifo(dir: &path::Path, name: &str, ifo: ifo::Ifo) -> crate::Result<Self> {
         let idx_path = dir.join(format!("{}.idx", name));
         let idx_path = if idx_path.exists() {
@@ -67,13 +122,7 @@ impl StarDictDictionary {
             None
         };
 
-        let info_data = DictInfo {
-            name: ifo.name.clone(),
-            author: ifo.author.clone(),
-            description: ifo.description.clone(),
-            word_count: ifo.word_count,
-        };
-
+        let info_data = info_of(&ifo);
         Ok(StarDictDictionary { idx, ifo, dict, syn, info_data })
     }
 
@@ -163,6 +212,15 @@ impl Dictionary for StarDictDictionary {
 
     fn search_prefix(&self, prefix: &str, limit: usize) -> Vec<String> {
         self.idx.search_prefix(prefix, limit)
+    }
+}
+
+fn info_of(ifo: &ifo::Ifo) -> DictInfo {
+    DictInfo {
+        name: ifo.name.clone(),
+        author: ifo.author.clone(),
+        description: ifo.description.clone(),
+        word_count: ifo.word_count,
     }
 }
 
