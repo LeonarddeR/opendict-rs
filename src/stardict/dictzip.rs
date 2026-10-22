@@ -216,30 +216,21 @@ fn read_range(
         )));
     }
 
-    let mut buf = Vec::with_capacity((last - first + 1) * chunk_len);
+    // Inflate each chunk only as far as the range needs, never to its stream
+    // end: GNU dictzip full-flushes every chunk, the last one included, and
+    // writes the stream's closing BFINAL block after the chunk table, so no
+    // chunk is a complete deflate stream on its own. A range running past the
+    // data fails here with UnexpectedEof.
+    let mut buf = Vec::with_capacity(end - first * chunk_len);
     for i in first..=last {
         let comp = &d[comp_offsets[i]..comp_offsets[i + 1]];
-        let mut decoder = DeflateDecoder::new(comp);
-        if i + 1 == chunk_count {
-            // Final chunk: the deflate stream is BFINAL-terminated, so read to
-            // the end (it may be shorter than CHLEN).
-            decoder.read_to_end(&mut buf)?;
-        } else {
-            // Interior chunk: the stream is only flush-terminated (no BFINAL),
-            // so pull exactly CHLEN bytes rather than reading to stream end.
-            let base = buf.len();
-            buf.resize(base + chunk_len, 0);
-            decoder.read_exact(&mut buf[base..])?;
-        }
+        let base = buf.len();
+        buf.resize(base + chunk_len.min(end - i * chunk_len), 0);
+        DeflateDecoder::new(comp).read_exact(&mut buf[base..])?;
     }
 
-    let local = offset - first * chunk_len;
-    if local + size > buf.len() {
-        return Err(Error::InvalidFormat(
-            "dictzip: decompressed data shorter than the requested range".into(),
-        ));
-    }
-    Ok(buf[local..local + size].to_vec())
+    buf.drain(..offset - first * chunk_len);
+    Ok(buf)
 }
 
 /// Scan a gzip FEXTRA area for the dictzip `"RA"` subfield, returning its data.
@@ -300,12 +291,37 @@ mod tests {
             data.chunks(chunk_len).collect()
         };
         let comp: Vec<Vec<u8>> = chunks.iter().map(|c| deflate_raw(c)).collect();
+        wrap_dictzip(data, chunk_len, &comp, &[])
+    }
 
+    /// Build a dictzip container the way GNU dictzip writes one: a single
+    /// deflate stream, full-flushed at every chunk boundary, so no chunk ends
+    /// in a BFINAL block. The stream's closing empty final block follows the
+    /// last chunk, outside the chunk table.
+    fn build_gnu_dictzip(data: &[u8], chunk_len: usize) -> Vec<u8> {
+        use flate2::{Compress, Compression, FlushCompress};
+        let mut z = Compress::new(Compression::default(), false);
+        let mut comp = Vec::new();
+        for chunk in data.chunks(chunk_len) {
+            let mut c = Vec::with_capacity(chunk.len() + 64);
+            z.compress_vec(chunk, &mut c, FlushCompress::Full).unwrap();
+            comp.push(c);
+        }
+        assert_eq!(z.total_in(), data.len() as u64);
+        let mut trailer = Vec::with_capacity(64);
+        z.compress_vec(&[], &mut trailer, FlushCompress::Finish)
+            .unwrap();
+        wrap_dictzip(data, chunk_len, &comp, &trailer)
+    }
+
+    /// Wrap compressed chunks (plus any bytes past the chunk table) in a gzip
+    /// header carrying the RA subfield, and the gzip footer for `data`.
+    fn wrap_dictzip(data: &[u8], chunk_len: usize, comp: &[Vec<u8>], trailer: &[u8]) -> Vec<u8> {
         let mut ra = Vec::new();
         ra.extend_from_slice(&1u16.to_le_bytes()); // VER
         ra.extend_from_slice(&(chunk_len as u16).to_le_bytes()); // CHLEN
         ra.extend_from_slice(&(comp.len() as u16).to_le_bytes()); // CHCNT
-        for c in &comp {
+        for c in comp {
             ra.extend_from_slice(&(c.len() as u16).to_le_bytes());
         }
 
@@ -322,9 +338,10 @@ mod tests {
         out.push(0xff); // OS = unknown
         out.extend_from_slice(&(extra.len() as u16).to_le_bytes()); // XLEN
         out.extend_from_slice(&extra);
-        for c in &comp {
+        for c in comp {
             out.extend_from_slice(c);
         }
+        out.extend_from_slice(trailer);
         let mut crc = flate2::Crc::new();
         crc.update(data);
         out.extend_from_slice(&crc.sum().to_le_bytes()); // CRC32
@@ -366,9 +383,30 @@ mod tests {
     }
 
     #[test]
+    fn gnu_dictzip_reads_last_chunk() {
+        // The last chunk ends in a full flush, not a BFINAL block.
+        let data: Vec<u8> = (0..200u32).map(|i| (i % 251) as u8).collect();
+        let dz = build_gnu_dictzip(&data, 16);
+        let (clen, offsets) = parse_header(&dz).unwrap().unwrap();
+        for &(off, size) in &[
+            (14u64, 6u32), // spans the chunk 0/1 boundary
+            (190, 10),     // spans into the last chunk, ends at the tail
+            (192, 8),      // the whole last chunk
+            (194, 3),      // inside the last chunk
+        ] {
+            let got = read_range(&dz, clen, &offsets, off, size).unwrap();
+            let want = &data[off as usize..off as usize + size as usize];
+            assert_eq!(got, want, "off={off} size={size}");
+        }
+    }
+
+    #[test]
     fn read_past_end_errors() {
         let data: Vec<u8> = (0..40u8).collect();
         let dz = build_dictzip(&data, 16);
+        let (clen, offsets) = parse_header(&dz).unwrap().unwrap();
+        assert!(read_range(&dz, clen, &offsets, 38, 10).is_err());
+        let dz = build_gnu_dictzip(&data, 16);
         let (clen, offsets) = parse_header(&dz).unwrap().unwrap();
         assert!(read_range(&dz, clen, &offsets, 38, 10).is_err());
     }
